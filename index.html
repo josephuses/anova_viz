@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ANOVA: Signal vs. Noise</title>
+    
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f4f6f8; color: #333; display: flex; flex-direction: column; align-items: center; padding: 20px; margin: 0; }
+        
+        h1 { margin-bottom: 10px; color: #2c3e50; }
+
+        .container { max-width: 1100px; width: 100%; display: grid; grid-template-columns: 320px 1fr; gap: 20px; }
+        
+        /* Context Box */
+        .context-box {
+            grid-column: 1 / -1;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            border-left: 5px solid #8e44ad; /* Purple for ANOVA */
+            margin-bottom: 10px;
+        }
+        .context-title { font-weight: bold; font-size: 1.2em; margin-bottom: 10px; color: #8e44ad; }
+        
+        .formula-display {
+            font-size: 1.2em; text-align: center; background: #f9f9f9; padding: 15px; border-radius: 6px; margin: 10px 0;
+            border: 1px solid #eee;
+        }
+
+        /* Sidebar Controls */
+        .controls { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); height: fit-content; }
+        .control-group { margin-bottom: 25px; }
+        label { display: flex; justify-content: space-between; font-weight: 600; font-size: 0.9em; color: #555; margin-bottom: 5px; }
+        input[type=range] { width: 100%; cursor: pointer; }
+        .val-display { color: #8e44ad; font-weight: bold; }
+        
+        /* Stats Dashboard */
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px; }
+        .stat-card { background: #f8f9fa; padding: 10px; border-radius: 5px; text-align: center; border: 1px solid #dee2e6; }
+        .stat-val { font-size: 1.4em; font-weight: bold; display: block; }
+        .stat-label { font-size: 0.75em; text-transform: uppercase; color: #7f8c8d; letter-spacing: 0.5px; }
+        
+        .color-bet { color: #27ae60; }
+        .color-wit { color: #e74c3c; }
+        .color-f { color: #8e44ad; }
+
+        /* Visualization Area */
+        .viz-panel { background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); padding: 10px; min-height: 500px; position: relative; }
+
+        /* D3 Elements */
+        .axis text { fill: #7f8c8d; font-size: 11px; }
+        .domain, .tick line { stroke: #bdc3c7; }
+        
+        .curve { fill-opacity: 0.2; stroke-width: 2; }
+        .curve-1 { stroke: #3498db; fill: #3498db; }
+        .curve-2 { stroke: #f1c40f; fill: #f1c40f; }
+        .curve-3 { stroke: #e74c3c; fill: #e74c3c; }
+
+        .mean-line { stroke-width: 2; stroke-dasharray: 4,2; opacity: 0.7; }
+        .global-mean { stroke: #333; stroke-width: 1; opacity: 0.3; }
+
+        .annotation-text { font-size: 12px; font-weight: bold; fill: #555; text-anchor: middle; }
+
+        .conclusion-box {
+            grid-column: span 2; padding: 10px; border-radius: 4px; color: white; font-weight: bold; margin-top: 10px;
+            transition: background 0.3s;
+        }
+
+    </style>
+</head>
+<body>
+
+    <h1>ANOVA: Signal vs. Noise</h1>
+
+    <div class="container">
+        
+        <div class="context-box">
+            <div class="context-title">Analysis of Variance (ANOVA)</div>
+            <p>ANOVA tests if there is a statistically significant difference between the means of 3+ groups. It works by comparing two types of variation:</p>
+            
+            <div class="formula-display">
+                \( F = \frac{\text{Variation BETWEEN Groups (Signal)}}{\text{Variation WITHIN Groups (Noise)}} \)
+            </div>
+            
+            <p>If the <strong>Between</strong> variation (Green) is much larger than the <strong>Within</strong> variation (Red), the F-statistic is large, and we conclude the groups are different.</p>
+        </div>
+
+        <div class="controls">
+            <h3>Parameters</h3>
+            
+            <div class="control-group">
+                <label>Difference Between Means <span id="val_sep" class="val-display">Low</span></label>
+                <input type="range" id="sepSlider" min="0" max="40" step="1" value="10">
+                <small style="color:#27ae60">Increases the Numerator (Signal)</small>
+            </div>
+
+            <div class="control-group">
+                <label>Variation Within Groups <span id="val_var" class="val-display">High</span></label>
+                <input type="range" id="varSlider" min="5" max="30" step="1" value="20">
+                <small style="color:#e74c3c">Increases the Denominator (Noise)</small>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card" style="border-left: 4px solid #27ae60;">
+                    <span class="stat-val color-bet" id="stat_msb">--</span>
+                    <span class="stat-label">MS Between</span>
+                </div>
+                <div class="stat-card" style="border-left: 4px solid #e74c3c;">
+                    <span class="stat-val color-wit" id="stat_msw">--</span>
+                    <span class="stat-label">MS Within</span>
+                </div>
+                <div class="stat-card" style="grid-column: span 2; border: 2px solid #8e44ad; background: #fcf4ff;">
+                    <span class="stat-val color-f" id="stat_f">--</span>
+                    <span class="stat-label">F-Statistic</span>
+                </div>
+                <div id="conclusion" class="conclusion-box" style="background:#95a5a6;">
+                    Result: Inconclusive
+                </div>
+            </div>
+        </div>
+
+        <div class="viz-panel" id="viz"></div>
+    </div>
+
+<script>
+    // --- Config ---
+    const margin = {top: 40, right: 30, bottom: 50, left: 30};
+    const width = 750 - margin.left - margin.right;
+    const height = 450 - margin.top - margin.bottom;
+
+    // --- D3 Setup ---
+    const svg = d3.select("#viz").append("svg")
+        .attr("viewBox", `0 0 750 450`)
+        .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    // Scales
+    // X axis represents the value of the variable (e.g. Test Score)
+    const x = d3.scaleLinear().domain([-50, 50]).range([0, width]);
+    const y = d3.scaleLinear().domain([0, 0.15]).range([height, 0]);
+
+    // Axes
+    const xAxis = svg.append("g")
+        .attr("transform", `translate(0,${height})`)
+        .call(d3.axisBottom(x).ticks(10));
+
+    // Axis Label
+    svg.append("text").attr("x", width/2).attr("y", height + 40).attr("text-anchor", "middle").style("font-size", "12px").style("fill", "#666").text("Measured Value (e.g., Score, Height, Growth)");
+
+    // --- Elements ---
+    
+    // Group Curves
+    const pathG1 = svg.append("path").attr("class", "curve curve-1");
+    const pathG2 = svg.append("path").attr("class", "curve curve-2");
+    const pathG3 = svg.append("path").attr("class", "curve curve-3");
+    
+    // Mean Lines
+    const lineG1 = svg.append("line").attr("class", "mean-line").style("stroke", "#3498db");
+    const lineG2 = svg.append("line").attr("class", "mean-line").style("stroke", "#f1c40f");
+    const lineG3 = svg.append("line").attr("class", "mean-line").style("stroke", "#e74c3c");
+    
+    // Global Mean Line
+    const lineGlobal = svg.append("line").attr("class", "global-mean")
+        .attr("x1", x(0)).attr("x2", x(0)).attr("y1", 0).attr("y2", height);
+
+    // Annotations for Variation
+    const arrowBetween = svg.append("path").attr("fill", "none").attr("stroke", "#27ae60").attr("stroke-width", 2).attr("marker-end", "url(#arrowG)").attr("marker-start", "url(#arrowG)");
+    const textBetween = svg.append("text").attr("class", "annotation-text").style("fill", "#27ae60").text("Between Var");
+    
+    const arrowWithin = svg.append("path").attr("fill", "none").attr("stroke", "#e74c3c").attr("stroke-width", 2).attr("marker-end", "url(#arrowR)").attr("marker-start", "url(#arrowR)");
+    const textWithin = svg.append("text").attr("class", "annotation-text").style("fill", "#e74c3c").text("Within Var");
+
+
+    // --- Math ---
+    function normalPDF(x, mean, std) {
+        return (1 / (std * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * Math.pow((x - mean) / std, 2));
+    }
+
+    // --- Update Function ---
+    function update() {
+        const separation = parseFloat(document.getElementById('sepSlider').value);
+        const spread = parseFloat(document.getElementById('varSlider').value); // This is SD
+
+        // UI Labels
+        document.getElementById('val_sep').innerText = separation;
+        document.getElementById('val_var').innerText = spread;
+
+        // Group Parameters
+        // Center group is at 0. Left is at -sep, Right is at +sep.
+        const mean1 = -separation;
+        const mean2 = 0;
+        const mean3 = separation;
+        
+        // --- Calculate Stats (Simulated) ---
+        // Let's pretend n=10 per group
+        const n = 10;
+        const k = 3; // groups
+        const N = n * k; 
+        
+        // Grand Mean = 0 (since symmetric)
+        
+        // SS Between = sum n_i * (mean_i - grand_mean)^2
+        const SS_B = n * (Math.pow(mean1, 2) + Math.pow(mean2, 2) + Math.pow(mean3, 2));
+        const df_B = k - 1;
+        const MS_B = SS_B / df_B;
+
+        // SS Within = sum (n_i - 1) * variance_i
+        // variance = spread^2
+        const variance = spread * spread;
+        const SS_W = (n - 1) * variance * k; 
+        const df_W = N - k;
+        const MS_W = SS_W / df_W;
+
+        const F = MS_B / MS_W;
+
+        // Update Stats UI
+        document.getElementById('stat_msb').innerText = MS_B.toFixed(1);
+        document.getElementById('stat_msw').innerText = MS_W.toFixed(1);
+        document.getElementById('stat_f').innerText = F.toFixed(2);
+
+        // Conclusion Logic (Approximate P-value threshold for F(2, 27) is roughly 3.35 for alpha=0.05)
+        const critF = 3.35;
+        const box = document.getElementById('conclusion');
+        
+        if (F > critF) {
+            box.style.background = "#27ae60";
+            box.innerText = "Result: Significant Difference! (Reject H0)";
+        } else {
+            box.style.background = "#95a5a6";
+            box.innerText = "Result: Not Significant (Fail to Reject H0)";
+        }
+
+        // --- Drawing ---
+        
+        // 1. Generate Curve Data
+        const steps = 200;
+        const xVals = d3.range(-60, 60, 120/steps);
+        
+        const lineGen = d3.line().x(d => x(d.x)).y(d => y(d.y));
+
+        const data1 = xVals.map(v => ({ x: v, y: normalPDF(v, mean1, spread) }));
+        const data2 = xVals.map(v => ({ x: v, y: normalPDF(v, mean2, spread) }));
+        const data3 = xVals.map(v => ({ x: v, y: normalPDF(v, mean3, spread) }));
+
+        pathG1.attr("d", lineGen(data1));
+        pathG2.attr("d", lineGen(data2));
+        pathG3.attr("d", lineGen(data3));
+
+        // 2. Update Lines
+        lineG1.attr("x1", x(mean1)).attr("x2", x(mean1)).attr("y1", y(0)).attr("y2", y(normalPDF(mean1, mean1, spread)));
+        lineG2.attr("x1", x(mean2)).attr("x2", x(mean2)).attr("y1", y(0)).attr("y2", y(normalPDF(mean2, mean2, spread)));
+        lineG3.attr("x1", x(mean3)).attr("x2", x(mean3)).attr("y1", y(0)).attr("y2", y(normalPDF(mean3, mean3, spread)));
+
+        // 3. Update Annotations
+        // Arrow for Between (From Mean 1 to Mean 3) top of chart
+        const annotY = 30;
+        arrowBetween.attr("d", `M${x(mean1)},${annotY} L${x(mean3)},${annotY}`);
+        textBetween.attr("x", x(0)).attr("y", annotY - 10);
+
+        // Arrow for Within (Across the width of Group 3 curve roughly)
+        // 1 SD = spread. Let's draw it at y corresponding to 1 SD height approx
+        const withinY = y(normalPDF(mean3 + spread, mean3, spread));
+        arrowWithin.attr("d", `M${x(mean3 - spread)},${withinY} L${x(mean3 + spread)},${withinY}`);
+        textWithin.attr("x", x(mean3)).attr("y", withinY + 15);
+    }
+
+    // Arrows Defs
+    const defs = svg.append("defs");
+    
+    // Green Arrow
+    defs.append("marker").attr("id", "arrowG").attr("viewBox", "0 -5 10 10").attr("refX", 5).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto")
+        .append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", "#27ae60");
+        
+    // Red Arrow
+    defs.append("marker").attr("id", "arrowR").attr("viewBox", "0 -5 10 10").attr("refX", 5).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6).attr("orient", "auto")
+        .append("path").attr("d", "M0,-5L10,0L0,5").attr("fill", "#e74c3c");
+
+    // Listeners
+    document.getElementById('sepSlider').addEventListener('input', update);
+    document.getElementById('varSlider').addEventListener('input', update);
+
+    // Init
+    update();
+
+</script>
+
+</body>
+</html>
